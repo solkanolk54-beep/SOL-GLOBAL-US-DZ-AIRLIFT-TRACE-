@@ -4,17 +4,27 @@
  */
 
 import express, { Request, Response } from 'express';
+import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createServer as createViteServer } from 'vite';
+import { Server as SocketIOServer } from 'socket.io';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const currentFilename = fileURLToPath(import.meta.url);
+const currentDirname = path.dirname(currentFilename);
 
-const app = express();
+export const app = express();
+export const httpServer = http.createServer(app);
+export const io = new SocketIOServer(httpServer, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST'],
+  },
+});
+
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
-app.use(express.json());
+app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
 import { INITIAL_AIRLIFT_SHIPMENTS, INITIAL_LIVESTOCK } from './src/services/mockData.ts';
 import { LivestockCow } from './src/types/index.ts';
@@ -22,6 +32,13 @@ import { LivestockCow } from './src/types/index.ts';
 // In-Memory Database Store for Express Microservices
 let liveAirliftFlights = [...INITIAL_AIRLIFT_SHIPMENTS];
 let liveLivestock = [...INITIAL_LIVESTOCK];
+
+// Socket.IO Connection Handler
+io.on('connection', (socket) => {
+  socket.on('ping', () => {
+    socket.emit('pong', { timestamp: Date.now() });
+  });
+});
 
 // 1. Healthcheck Route
 app.get('/api/health', (_req: Request, res: Response) => {
@@ -67,7 +84,11 @@ app.get('/api/livestock/rfid/:rfid', (req: Request, res: Response) => {
 
 app.post('/api/livestock/scan', (req: Request, res: Response) => {
   const { rfidTag, checkpointLocation } = req.body;
-  const normalized = (rfidTag || '').toUpperCase();
+  if (!rfidTag || typeof rfidTag !== 'string' || !rfidTag.trim()) {
+    res.status(400).json({ error: 'rfidTag is required and must be a valid non-empty string' });
+    return;
+  }
+  const normalized = rfidTag.trim().toUpperCase();
   let cow = liveLivestock.find((c) => c.rfidTag.toUpperCase() === normalized);
 
   if (!cow) {
@@ -118,14 +139,18 @@ app.post('/api/livestock/scan', (req: Request, res: Response) => {
     cow = newCow;
   }
 
-  res.json({
+  const responsePayload = {
     status: 'INGESTED',
     rfidTag: normalized,
     cow,
     checkpointLocation: checkpointLocation || 'Adrar Quarantine Primary Terminal',
     ingestTimestamp: new Date().toISOString(),
     telemetryStatus: 'VALID_ISO_11784',
-  });
+  };
+
+  io.emit('livestock:scanned', responsePayload);
+
+  res.json(responsePayload);
 });
 
 // Bulk RFID Ingestion endpoint for Flutter Handheld RFID Gun & Termux CLI
@@ -204,13 +229,17 @@ app.post('/api/livestock/bulk-scan', (req: Request, res: Response) => {
     });
   }
 
-  res.json({
+  const batchResponse = {
     status: 'BATCH_INGESTED',
     source: source || 'UNKNOWN_SCANNER',
     totalIngested: results.length,
     timestamp: new Date().toISOString(),
     results,
-  });
+  };
+
+  io.emit('livestock:scanned', batchResponse);
+
+  res.json(batchResponse);
 });
 
 // Update Urgent Veterinary Flag or Clinical Note
@@ -254,8 +283,18 @@ app.post('/api/livestock/milk-yield', (req: Request, res: Response) => {
 // 4. Climate THI & Adaptive Feed Microservice
 app.post('/api/climate-feed/calculate-ration', (req: Request, res: Response) => {
   const { wilaya, ambientTempC, relativeHumidityPct, targetYieldLiters } = req.body;
-  const temp = parseFloat(ambientTempC) || 38.0;
-  const rh = parseFloat(relativeHumidityPct) || 20.0;
+  
+  if (ambientTempC !== undefined && (isNaN(Number(ambientTempC)) || Number(ambientTempC) < -50 || Number(ambientTempC) > 70)) {
+    res.status(400).json({ error: 'ambientTempC must be a valid numeric temperature between -50 and 70' });
+    return;
+  }
+  if (relativeHumidityPct !== undefined && (isNaN(Number(relativeHumidityPct)) || Number(relativeHumidityPct) < 0 || Number(relativeHumidityPct) > 100)) {
+    res.status(400).json({ error: 'relativeHumidityPct must be a valid numeric percentage between 0 and 100' });
+    return;
+  }
+
+  const temp = ambientTempC !== undefined ? parseFloat(ambientTempC) : 38.0;
+  const rh = relativeHumidityPct !== undefined ? parseFloat(relativeHumidityPct) : 20.0;
   const thi = Number((0.8 * temp + (rh / 100) * (temp - 14.4) + 46.4).toFixed(1));
 
   let stressCategory = 'normal';
@@ -279,6 +318,48 @@ app.post('/api/climate-feed/calculate-ration', (req: Request, res: Response) => 
 });
 
 // 5. Farm-to-Fork QR Passport Microservice
+app.post('/api/traceability/generate-passport', (req: Request, res: Response) => {
+  const { batchId, productType, cowRfidList, farmId, farmName, farmWilaya, volumeLiters, destinationPlant } = req.body;
+
+  if (!batchId || typeof batchId !== 'string' || !batchId.trim()) {
+    res.status(400).json({ error: 'batchId is required and must be a non-empty string' });
+    return;
+  }
+  if (!productType || typeof productType !== 'string' || !productType.trim()) {
+    res.status(400).json({ error: 'productType is required and must be a non-empty string' });
+    return;
+  }
+  if (!Array.isArray(cowRfidList) || cowRfidList.length === 0) {
+    res.status(400).json({ error: 'cowRfidList is required and must be a non-empty array of RFID tags' });
+    return;
+  }
+
+  const token = `PASSPORT-${batchId.trim().toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
+  const verificationHash = 'HMAC-SHA256:' + Buffer.from(`${batchId}:${productType}:${cowRfidList.join(',')}:${Date.now()}`).toString('base64');
+
+  const passport = {
+    token,
+    batchId: batchId.trim(),
+    productType: productType.trim(),
+    cowRfidList,
+    farmId: farmId || 'DZ-FARM-ADRAR-01',
+    farmName: farmName || 'Adrar Mega-Dairy Oasis Complex',
+    farmWilaya: farmWilaya || 'Adrar',
+    volumeLiters: typeof volumeLiters === 'number' ? volumeLiters : 2500,
+    destinationPlant: destinationPlant || 'Giplait Rouiba Processing Complex',
+    createdAt: new Date().toISOString(),
+    verificationHash,
+    inspectedBy: 'SOL Global Traceability Auditor & Algerian Ministry of Agriculture',
+    isValid: true,
+  };
+
+  res.status(201).json({
+    success: true,
+    status: 'PASSPORT_GENERATED',
+    passport,
+  });
+});
+
 app.get('/api/traceability/verify/:token', (req: Request, res: Response) => {
   const { token } = req.params;
   res.json({
@@ -335,6 +416,12 @@ function broadcastSse(eventType: string, data: any) {
 // Ingestion Endpoint: accepts payloads from external scripts (Node/Python) or MQTT Bridges
 app.post('/api/iot/ingest', (req: Request, res: Response) => {
   const { topic, type, data } = req.body;
+
+  if (!type || !data || (type !== 'collar' && type !== 'soil')) {
+    res.status(400).json({ error: 'Valid payload type ("collar" or "soil") and data object are required' });
+    return;
+  }
+
   totalPacketsIngested++;
 
   if (type === 'collar' && data?.rfidTag) {
@@ -358,12 +445,15 @@ app.post('/api/iot/ingest', (req: Request, res: Response) => {
       if (feedLogsAlertBuffer.length > 50) feedLogsAlertBuffer.pop();
 
       broadcastSse('cooling_alert', alertLog);
+      io.emit('cooling_alert', alertLog);
     }
 
     broadcastSse('collar_telemetry', data);
+    io.emit('iot:telemetry_update', { topic: topic || `sol/iot/livestock/${data.rfidTag}/telemetry`, type: 'collar', data });
   } else if (type === 'soil' && data?.zoneId) {
     liveSoilMap[data.zoneId] = data;
     broadcastSse('soil_telemetry', data);
+    io.emit('iot:telemetry_update', { topic: topic || `sol/iot/soil/${data.zoneId}/tdr`, type: 'soil', data });
   }
 
   res.json({
@@ -436,61 +526,89 @@ app.post('/api/iot/control', (req: Request, res: Response) => {
   });
 });
 
-// Internal Background Loop to keep dashboard telemetry pulsating
-setInterval(() => {
-  if (!serverSimulatorRunning) return;
+const isTest = process.env.NODE_ENV === 'test' || Boolean(process.env.JEST_WORKER_ID);
 
-  INITIAL_COLLARS_DEF.forEach((c) => {
-    const reading = iotSimulator.generateCollarReading(c);
-    liveCollarsMap[c.rfidTag] = reading;
-    totalPacketsIngested++;
+let backgroundInterval: NodeJS.Timeout | null = null;
 
-    if (reading.coolingAlertActive) {
-      feedLogsAlertBuffer.unshift({
-        id: `ALERT-${Date.now()}-${c.rfidTag}`,
-        timestamp: reading.timestamp,
-        rfidTag: reading.rfidTag,
-        cowName: reading.cowName,
-        wilaya: reading.wilaya,
-        ambientTempC: reading.ambientTempC,
-        relativeHumidityPct: reading.relativeHumidityPct,
-        thiIndex: reading.thiIndex,
-        action: 'COOLING_PROTOCOL_ACTIVE_THI_75',
-        intervention: reading.coolingIntervention,
-      });
-      if (feedLogsAlertBuffer.length > 50) feedLogsAlertBuffer.pop();
-    }
-    broadcastSse('collar_telemetry', reading);
-  });
+if (!isTest) {
+  backgroundInterval = setInterval(() => {
+    if (!serverSimulatorRunning) return;
 
-  INITIAL_SOIL_SENSORS_DEF.forEach((s) => {
-    const reading = iotSimulator.generateSoilReading(s);
-    liveSoilMap[s.zoneId] = reading;
-    totalPacketsIngested++;
-    broadcastSse('soil_telemetry', reading);
-  });
-}, serverSimulatorIntervalMs);
+    INITIAL_COLLARS_DEF.forEach((c) => {
+      const reading = iotSimulator.generateCollarReading(c);
+      liveCollarsMap[c.rfidTag] = reading;
+      totalPacketsIngested++;
+
+      if (reading.coolingAlertActive) {
+        feedLogsAlertBuffer.unshift({
+          id: `ALERT-${Date.now()}-${c.rfidTag}`,
+          timestamp: reading.timestamp,
+          rfidTag: reading.rfidTag,
+          cowName: reading.cowName,
+          wilaya: reading.wilaya,
+          ambientTempC: reading.ambientTempC,
+          relativeHumidityPct: reading.relativeHumidityPct,
+          thiIndex: reading.thiIndex,
+          action: 'COOLING_PROTOCOL_ACTIVE_THI_75',
+          intervention: reading.coolingIntervention,
+        });
+        if (feedLogsAlertBuffer.length > 50) feedLogsAlertBuffer.pop();
+        broadcastSse('cooling_alert', feedLogsAlertBuffer[0]);
+        io.emit('cooling_alert', feedLogsAlertBuffer[0]);
+      }
+      broadcastSse('collar_telemetry', reading);
+      io.emit('iot:telemetry_update', { topic: `sol/iot/livestock/${c.rfidTag}/telemetry`, type: 'collar', data: reading });
+    });
+
+    INITIAL_SOIL_SENSORS_DEF.forEach((s) => {
+      const reading = iotSimulator.generateSoilReading(s);
+      liveSoilMap[s.zoneId] = reading;
+      totalPacketsIngested++;
+      broadcastSse('soil_telemetry', reading);
+      io.emit('iot:telemetry_update', { topic: `sol/iot/soil/${s.zoneId}/tdr`, type: 'soil', data: reading });
+    });
+  }, serverSimulatorIntervalMs);
+}
+
+export function resetTestDatabase() {
+  liveAirliftFlights = [...INITIAL_AIRLIFT_SHIPMENTS];
+  liveLivestock = [...INITIAL_LIVESTOCK];
+  feedLogsAlertBuffer = [];
+  totalPacketsIngested = 0;
+}
+
+export function stopBackgroundInterval() {
+  if (backgroundInterval) {
+    clearInterval(backgroundInterval);
+    backgroundInterval = null;
+  }
+}
 
 // Initialize Vite Dev Server in Development or Serve Static in Production
 async function startServer() {
-  if (process.env.NODE_ENV !== 'production') {
+  if (process.env.NODE_ENV !== 'production' && !isTest) {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
     });
     app.use(vite.middlewares);
-  } else {
-    app.use(express.static(path.join(__dirname, 'dist')));
+  } else if (process.env.NODE_ENV === 'production') {
+    app.use(express.static(path.join(currentDirname, 'dist')));
     app.get('*', (_req, res) => {
-      res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+      res.sendFile(path.join(currentDirname, 'dist', 'index.html'));
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[SOL Global] Tactical Server listening on port ${PORT}`);
-  });
+  if (!isTest) {
+    httpServer.listen(PORT, '0.0.0.0', () => {
+      console.log(`[SOL Global] Tactical Server listening on port ${PORT}`);
+    });
+  }
 }
 
-startServer().catch((err) => {
-  console.error('[SOL Global] Server initialization failed:', err);
-});
+if (!isTest) {
+  startServer().catch((err) => {
+    console.error('[SOL Global] Server initialization failed:', err);
+  });
+}

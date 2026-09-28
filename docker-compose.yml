@@ -1,0 +1,124 @@
+# ==============================================================================
+# SOL Global / US-DZ Airlift & Livestock Trace Platform
+# Production Docker Compose Orchestration (One-Click Deployment)
+# ==============================================================================
+
+version: '3.8'
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. Main Application & Realtime API Server
+  # ----------------------------------------------------------------------------
+  app_server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sol_app_server
+    restart: always
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env.production
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    depends_on:
+      db_spatial:
+        condition: service_healthy
+      cache_redis:
+        condition: service_healthy
+      mqtt_broker:
+        condition: service_started
+    networks:
+      - sol_tactical_net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ----------------------------------------------------------------------------
+  # 2. PostgreSQL 15 with PostGIS Spatial Engine
+  # ----------------------------------------------------------------------------
+  db_spatial:
+    image: postgis/postgis:15-3.3-alpine
+    container_name: sol_db_spatial
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sol_livestock_db}
+      POSTGRES_USER: ${POSTGRES_USER:-sol_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sol_tactical_secure_pass_2026}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - sol_pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
+    networks:
+      - sol_tactical_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sol_admin} -d ${POSTGRES_DB:-sol_livestock_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ----------------------------------------------------------------------------
+  # 3. Redis In-Memory Cache, Pub/Sub & Rate Limiter
+  # ----------------------------------------------------------------------------
+  cache_redis:
+    image: redis:7-alpine
+    container_name: sol_cache_redis
+    restart: always
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - sol_redisdata:/data
+    networks:
+      - sol_tactical_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  # ----------------------------------------------------------------------------
+  # 4. Eclipse Mosquitto IoT MQTT & WebSocket Message Broker
+  # ----------------------------------------------------------------------------
+  mqtt_broker:
+    image: eclipse-mosquitto:2
+    container_name: sol_mqtt_broker
+    restart: always
+    ports:
+      - "1883:1883"  # Standard MQTT TCP Port (Scanners, ESP32, Python Bridges)
+      - "9001:9001"  # WebSocket MQTT Port (Web Dashboards, Flutter Handhelds)
+    volumes:
+      - ./docker/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - sol_mosquitto_data:/mosquitto/data
+      - sol_mosquitto_log:/mosquitto/log
+    networks:
+      - sol_tactical_net
+
+# ------------------------------------------------------------------------------
+# Isolated Tactical Network
+# ------------------------------------------------------------------------------
+networks:
+  sol_tactical_net:
+    driver: bridge
+    name: sol_tactical_net
+
+# ------------------------------------------------------------------------------
+# Persistent Docker Volumes
+# ------------------------------------------------------------------------------
+volumes:
+  sol_pgdata:
+    name: sol_pgdata
+  sol_redisdata:
+    name: sol_redisdata
+  sol_mosquitto_data:
+    name: sol_mosquitto_data
+  sol_mosquitto_log:
+    name: sol_mosquitto_log
