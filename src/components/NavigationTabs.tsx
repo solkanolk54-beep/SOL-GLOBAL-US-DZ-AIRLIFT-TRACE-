@@ -7,9 +7,10 @@ import {
   QrCode,
   DatabaseZap,
   Cpu,
+  Scan,
 } from 'lucide-react';
 
-export type TabId = 'dashboard' | 'airlift' | 'rfid' | 'feed_climate' | 'qr_passport' | 'iot_telemetry' | 'db_api';
+export type TabId = 'dashboard' | 'airlift' | 'rfid' | 'flutter_field_rfid' | 'iot_telemetry' | 'feed_climate' | 'qr_passport' | 'db_api';
 
 interface Props {
   activeTab: TabId;
@@ -24,6 +25,13 @@ export const NavigationTabs: React.FC<Props> = ({ activeTab, onSelectTab, langua
       labelAr: 'غرفة العمليات المركزية',
       labelEn: 'Operations Command',
       icon: <LayoutDashboard className="w-4 h-4" />,
+    },
+    {
+      id: 'flutter_field_rfid',
+      labelAr: 'قارئ RFID الميداني (Flutter / Termux)',
+      labelEn: 'Field RFID Gun (Flutter)',
+      icon: <Scan className="w-4 h-4" />,
+      badge: 'RFID Gun',
     },
     {
       id: 'airlift',

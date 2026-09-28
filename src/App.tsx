@@ -13,6 +13,7 @@ import { MicroclimateFeedCalculator } from './components/MicroclimateFeedCalcula
 import { FarmToForkPassport } from './components/FarmToForkPassport';
 import { DatabaseSchemaViewer } from './components/DatabaseSchemaViewer';
 import { IoTTelemetryPanel } from './components/IoTTelemetryPanel';
+import { FlutterFieldRfidScanner } from './components/FlutterFieldRfidScanner';
 import { OfflineSyncModal } from './components/OfflineSyncModal';
 import { apiService } from './services/apiService';
 import { AirliftShipment, LivestockCow, ClimateTelemetry } from './types';
@@ -126,6 +127,10 @@ export default function App() {
                 onNavigate={setActiveTab}
                 onSelectFlight={handleSelectFlightFromRadar}
               />
+            )}
+
+            {activeTab === 'flutter_field_rfid' && (
+              <FlutterFieldRfidScanner />
             )}
 
             {activeTab === 'airlift' && (

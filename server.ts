@@ -128,6 +128,110 @@ app.post('/api/livestock/scan', (req: Request, res: Response) => {
   });
 });
 
+// Bulk RFID Ingestion endpoint for Flutter Handheld RFID Gun & Termux CLI
+app.post('/api/livestock/bulk-scan', (req: Request, res: Response) => {
+  const { scans, source } = req.body;
+  if (!Array.isArray(scans)) {
+    res.status(400).json({ error: 'scans array is required' });
+    return;
+  }
+
+  const results = [];
+  for (const item of scans) {
+    const rawTag = item.rfidTag || item;
+    if (!rawTag) continue;
+    const normalized = String(rawTag).trim().toUpperCase();
+
+    let cow = liveLivestock.find((c) => c.rfidTag.toUpperCase() === normalized);
+    if (!cow) {
+      cow = {
+        id: 'cow_' + Date.now() + '_' + Math.random().toString(36).substring(7),
+        rfidTag: normalized,
+        usEarTag: item.usEarTag || `USA-TX-2024-${Math.floor(1000 + Math.random() * 9000)}`,
+        dzNationalId: item.dzNationalId || `DZ-ADR-01-${Math.floor(1000 + Math.random() * 9000)}`,
+        breed: item.breed || 'Purebred Holstein Friesian (هولشتاين أمريكي أصيل)',
+        airliftShipmentId: 'flight_tx_001',
+        flightNumber: 'SOL-AF-109-TX01',
+        birthDate: '2024-04-10',
+        originState: 'Texas',
+        currentWilaya: 'Adrar',
+        farmId: 'DZ-FARM-ADRAR-01',
+        farmName: 'Adrar Mega-Dairy Oasis Complex',
+        barnNumber: 'Barn-A',
+        penNumber: 'Pen-06',
+        quarantineStatus: (item.quarantineStatus as any) || 'quarantine_holding',
+        quarantineDay: 1,
+        geneticMerit: {
+          sireName: 'Pine-Tree Dairy Kingpin-ET',
+          sireRegistration: 'HOUSA72851652',
+          damName: 'Lone-Star Superstition 4402',
+          geneticMeritTpi: item.geneticMeritTpi || 2940,
+          milkYieldGenomicPotentialL: 13900,
+          genomicInbreedingPct: 4.0,
+        },
+        currentWeightKg: item.currentWeightKg || 635.0,
+        weightHistory: [{ date: new Date().toISOString().split('T')[0], weightKg: item.currentWeightKg || 635.0 }],
+        lactationCycle: {
+          lactationNumber: 1,
+          daysInMilk: 42,
+          inseminationDate: item.inseminationDate || '2026-08-12',
+          inseminationBull: 'S-S-I Franchise Gallantry',
+          pregnancyStatus: item.pregnancyStatus || 'confirmed_pregnant',
+        },
+        averageMilkYieldL: item.averageMilkYieldL || 36.5,
+        targetMilkYieldL: 38.0,
+        recentMilkYields: [],
+        vaccinations: [],
+        healthScore: 96,
+        ruminationMinutesPerDay: 530,
+        activityIndex: 102,
+        gpsCoordinates: [27.9124, -0.2241],
+      };
+      liveLivestock.unshift(cow);
+    }
+
+    if (item.urgentFlag) {
+      (cow as any).urgentFlag = item.urgentFlag;
+    }
+    if (item.vetNote) {
+      (cow as any).vetNote = item.vetNote;
+    }
+
+    results.push({
+      rfidTag: normalized,
+      status: 'INGESTED',
+      syncedAt: new Date().toISOString(),
+    });
+  }
+
+  res.json({
+    status: 'BATCH_INGESTED',
+    source: source || 'UNKNOWN_SCANNER',
+    totalIngested: results.length,
+    timestamp: new Date().toISOString(),
+    results,
+  });
+});
+
+// Update Urgent Veterinary Flag or Clinical Note
+app.post('/api/livestock/vet-action', (req: Request, res: Response) => {
+  const { rfidTag, urgentFlag, vetNote } = req.body;
+  const cow = liveLivestock.find((c) => c.rfidTag.toUpperCase() === (rfidTag || '').toUpperCase());
+  if (!cow) {
+    res.status(404).json({ error: 'Cow not found' });
+    return;
+  }
+  (cow as any).urgentFlag = urgentFlag;
+  (cow as any).vetNote = vetNote;
+  res.json({
+    success: true,
+    rfidTag,
+    urgentFlag,
+    vetNote,
+    updatedAt: new Date().toISOString(),
+  });
+});
+
 app.post('/api/livestock/milk-yield', (req: Request, res: Response) => {
   const { rfidTag, yieldData } = req.body;
   const cow = liveLivestock.find((c) => c.rfidTag.toUpperCase() === (rfidTag || '').toUpperCase());
