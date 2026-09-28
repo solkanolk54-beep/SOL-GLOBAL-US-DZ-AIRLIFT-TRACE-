@@ -1,0 +1,6 @@
+{
+  "name": "SOL Global - US-DZ Airlift & Livestock Trace",
+  "description": "Tactical AgriTech platform for US-Algeria livestock airlift logistics, RFID quarantine tracking, Holstein genetics, adaptive microclimate ration calculations, and Farm-to-Fork digital passport.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
