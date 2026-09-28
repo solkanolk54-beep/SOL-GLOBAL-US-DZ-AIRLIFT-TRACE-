@@ -186,6 +186,187 @@ app.get('/api/traceability/verify/:token', (req: Request, res: Response) => {
   });
 });
 
+// ============================================================================
+// 6. IoT Ingestion Microservice (AWS / GCP IoT Core & MQTT Compatible)
+// Topics: sol/iot/livestock/{rfid}/telemetry & sol/iot/soil/{zone}/tdr
+// ============================================================================
+
+import {
+  calculateLivestockThi,
+  INITIAL_COLLARS_DEF,
+  INITIAL_SOIL_SENSORS_DEF,
+  iotSimulator,
+} from './src/services/iotEngine';
+
+// Server-side in-memory live telemetry buffer
+let sseClients: Response[] = [];
+let liveCollarsMap: Record<string, any> = {};
+let liveSoilMap: Record<string, any> = {};
+let feedLogsAlertBuffer: any[] = [];
+let serverSimulatorRunning = true;
+let serverSimulatorIntervalMs = 3000;
+let serverHeatwaveMode = false;
+let totalPacketsIngested = 0;
+
+// Initialize initial state
+INITIAL_COLLARS_DEF.forEach((c) => {
+  liveCollarsMap[c.rfidTag] = iotSimulator.generateCollarReading(c);
+});
+INITIAL_SOIL_SENSORS_DEF.forEach((s) => {
+  liveSoilMap[s.zoneId] = iotSimulator.generateSoilReading(s);
+});
+
+// Broadcast helper to all connected SSE clients
+function broadcastSse(eventType: string, data: any) {
+  const payload = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
+  sseClients.forEach((client) => {
+    try {
+      client.write(payload);
+    } catch {
+      // client disconnected
+    }
+  });
+}
+
+// Ingestion Endpoint: accepts payloads from external scripts (Node/Python) or MQTT Bridges
+app.post('/api/iot/ingest', (req: Request, res: Response) => {
+  const { topic, type, data } = req.body;
+  totalPacketsIngested++;
+
+  if (type === 'collar' && data?.rfidTag) {
+    liveCollarsMap[data.rfidTag] = data;
+
+    // Check cooling threshold: THI >= 75
+    if (data.coolingAlertActive || data.thiIndex >= 75) {
+      const alertLog = {
+        id: `FEED-ALERT-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        rfidTag: data.rfidTag,
+        cowName: data.cowName,
+        wilaya: data.wilaya,
+        ambientTempC: data.ambientTempC,
+        relativeHumidityPct: data.relativeHumidityPct,
+        thiIndex: data.thiIndex,
+        action: 'EMERGENCY_COOLING_PROTOCOL_ENGAGED',
+        intervention: data.coolingIntervention,
+      };
+      feedLogsAlertBuffer.unshift(alertLog);
+      if (feedLogsAlertBuffer.length > 50) feedLogsAlertBuffer.pop();
+
+      broadcastSse('cooling_alert', alertLog);
+    }
+
+    broadcastSse('collar_telemetry', data);
+  } else if (type === 'soil' && data?.zoneId) {
+    liveSoilMap[data.zoneId] = data;
+    broadcastSse('soil_telemetry', data);
+  }
+
+  res.json({
+    status: 'INGESTED_OK',
+    topic: topic || 'direct',
+    packetCount: totalPacketsIngested,
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// Server-Sent Events (SSE) Live Telemetry Stream
+app.get('/api/iot/stream', (req: Request, res: Response) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  });
+
+  // Send initial snapshot immediately
+  res.write(
+    `event: snapshot\ndata: ${JSON.stringify({
+      collars: Object.values(liveCollarsMap),
+      soilSensors: Object.values(liveSoilMap),
+      alerts: feedLogsAlertBuffer.slice(0, 10),
+      totalPackets: totalPacketsIngested,
+      heatwaveMode: serverHeatwaveMode,
+    })}\n\n`
+  );
+
+  sseClients.push(res);
+
+  req.on('close', () => {
+    sseClients = sseClients.filter((c) => c !== res);
+  });
+});
+
+// State & Status Endpoint
+app.get('/api/iot/state', (_req: Request, res: Response) => {
+  res.json({
+    isRunning: serverSimulatorRunning,
+    intervalMs: serverSimulatorIntervalMs,
+    heatwaveMode: serverHeatwaveMode,
+    totalPackets: totalPacketsIngested,
+    collars: Object.values(liveCollarsMap),
+    soilSensors: Object.values(liveSoilMap),
+    recentAlerts: feedLogsAlertBuffer.slice(0, 10),
+    recentMqttMessages: iotSimulator.getRecentMessages().slice(0, 20),
+  });
+});
+
+// Simulator Control Endpoint
+app.post('/api/iot/control', (req: Request, res: Response) => {
+  const { action, intervalMs, heatwaveMode } = req.body;
+
+  if (action === 'start') serverSimulatorRunning = true;
+  if (action === 'stop') serverSimulatorRunning = false;
+  if (typeof heatwaveMode === 'boolean') {
+    serverHeatwaveMode = heatwaveMode;
+    iotSimulator.setHeatwaveMode(heatwaveMode);
+  }
+  if (typeof intervalMs === 'number' && intervalMs >= 500) {
+    serverSimulatorIntervalMs = intervalMs;
+  }
+
+  res.json({
+    success: true,
+    isRunning: serverSimulatorRunning,
+    intervalMs: serverSimulatorIntervalMs,
+    heatwaveMode: serverHeatwaveMode,
+  });
+});
+
+// Internal Background Loop to keep dashboard telemetry pulsating
+setInterval(() => {
+  if (!serverSimulatorRunning) return;
+
+  INITIAL_COLLARS_DEF.forEach((c) => {
+    const reading = iotSimulator.generateCollarReading(c);
+    liveCollarsMap[c.rfidTag] = reading;
+    totalPacketsIngested++;
+
+    if (reading.coolingAlertActive) {
+      feedLogsAlertBuffer.unshift({
+        id: `ALERT-${Date.now()}-${c.rfidTag}`,
+        timestamp: reading.timestamp,
+        rfidTag: reading.rfidTag,
+        cowName: reading.cowName,
+        wilaya: reading.wilaya,
+        ambientTempC: reading.ambientTempC,
+        relativeHumidityPct: reading.relativeHumidityPct,
+        thiIndex: reading.thiIndex,
+        action: 'COOLING_PROTOCOL_ACTIVE_THI_75',
+        intervention: reading.coolingIntervention,
+      });
+      if (feedLogsAlertBuffer.length > 50) feedLogsAlertBuffer.pop();
+    }
+    broadcastSse('collar_telemetry', reading);
+  });
+
+  INITIAL_SOIL_SENSORS_DEF.forEach((s) => {
+    const reading = iotSimulator.generateSoilReading(s);
+    liveSoilMap[s.zoneId] = reading;
+    totalPacketsIngested++;
+    broadcastSse('soil_telemetry', reading);
+  });
+}, serverSimulatorIntervalMs);
+
 // Initialize Vite Dev Server in Development or Serve Static in Production
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {

@@ -216,3 +216,70 @@ export interface OfflineSyncItem {
   status: 'pending' | 'syncing' | 'synced' | 'failed';
   retryCount: number;
 }
+
+export type CowActivityState =
+  | 'grazing'
+  | 'rumination'
+  | 'resting'
+  | 'active'
+  | 'heat_stressed_lethargic';
+
+export interface SmartCollarTelemetry {
+  deviceId: string; // e.g. "COLLAR-9021"
+  rfidTag: string; // e.g. "RFID-CTL-9021"
+  cowName: string;
+  farmId: string;
+  wilaya: WilayaLocation;
+  timestamp: string;
+  bodyTempC: number; // 38.5 - 40.5
+  ambientTempC: number;
+  relativeHumidityPct: number;
+  thiIndex: number; // Computed: (1.8 * T + 32) - ((0.55 - 0.0055 * RH) * (1.8 * T - 26))
+  activityState: CowActivityState;
+  heartRateBpm: number;
+  ruminationMinutesToday: number;
+  stepsCount: number;
+  batteryPct: number;
+  coolingAlertActive: boolean; // True if thiIndex >= 75
+  coolingIntervention: {
+    tunnelFanSpeedPct: number;
+    sprinklerIntervalMinutes: number;
+    mistingActive: boolean;
+    rumenBufferSupplementGrams: number;
+  };
+}
+
+export interface SoilTdrTelemetry {
+  sensorId: string; // e.g. "TDR-ADRAR-01"
+  zoneId: string; // e.g. "adrar_pivot_alfalfa"
+  zoneNameAr: string; // e.g. "حقل البرسيم الحجازي - محور الرش 01 أدرار"
+  wilaya: WilayaLocation;
+  cropType: 'Alfalfa (برسيم حجازي)' | 'Corn Silage (سيلاج ذرة)' | 'High Plains Pasture (مرعى طبيعي)';
+  timestamp: string;
+  vwcPct: number; // Volumetric Water Content % (12% - 40%)
+  ecDsM: number; // Electrical Conductivity / Salinity in dS/m (0.6 - 3.5)
+  rootZoneTempC: number; // Soil temp at root depth
+  shallowTempC: number;
+  depthCm: number; // Probe depth (e.g. 30cm or 60cm)
+  irrigationStatus: 'OPTIMAL' | 'DEFICIT_IRRIGATE_NOW' | 'SATURATED_REST';
+  recommendedWaterM3Ha: number;
+}
+
+export interface IoTTopicMessage {
+  topic: string;
+  timestamp: string;
+  protocol: 'MQTT' | 'MQTT-over-WSS';
+  qos: 0 | 1 | 2;
+  payload: SmartCollarTelemetry | SoilTdrTelemetry | any;
+}
+
+export interface IoTSimulatorState {
+  isRunning: boolean;
+  intervalMs: number;
+  totalPacketsSent: number;
+  lastPacketTime: string | null;
+  heatwaveMode: boolean;
+  activeCollars: SmartCollarTelemetry[];
+  activeSoilSensors: SoilTdrTelemetry[];
+}
+

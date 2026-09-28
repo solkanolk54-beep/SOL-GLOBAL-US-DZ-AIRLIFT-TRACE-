@@ -12,6 +12,7 @@ import { RfidQuarantineModule } from './components/RfidQuarantineModule';
 import { MicroclimateFeedCalculator } from './components/MicroclimateFeedCalculator';
 import { FarmToForkPassport } from './components/FarmToForkPassport';
 import { DatabaseSchemaViewer } from './components/DatabaseSchemaViewer';
+import { IoTTelemetryPanel } from './components/IoTTelemetryPanel';
 import { OfflineSyncModal } from './components/OfflineSyncModal';
 import { apiService } from './services/apiService';
 import { AirliftShipment, LivestockCow, ClimateTelemetry } from './types';
@@ -145,6 +146,10 @@ export default function App() {
                 onRecordYield={handleRecordYield}
                 soundEnabled={soundEnabled}
               />
+            )}
+
+            {activeTab === 'iot_telemetry' && (
+              <IoTTelemetryPanel soundEnabled={soundEnabled} />
             )}
 
             {activeTab === 'feed_climate' && (

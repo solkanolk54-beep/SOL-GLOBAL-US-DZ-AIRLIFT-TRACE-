@@ -1,0 +1,36 @@
+{
+  "mqtt": {
+    "brokerUrl": "mqtt://broker.emqx.io:1883",
+    "backupBrokerUrl": "mqtt://broker.hivemq.com:1883",
+    "clientIdPrefix": "sol-agritech-sim-",
+    "qos": 1,
+    "keepalive": 60,
+    "reconnectPeriod": 5000,
+    "cloudProvider": "AWS_OR_GCP_IOT_CORE_COMPATIBLE"
+  },
+  "ingestionApiUrl": "http://localhost:3000/api/iot/ingest",
+  "simulation": {
+    "intervalMs": 3000,
+    "heatwaveMode": false,
+    "thiThresholdAlert": 75.0,
+    "publishToHttp": true,
+    "publishToMqtt": true
+  },
+  "topics": {
+    "livestockCollar": "sol/iot/livestock/{rfid}/telemetry",
+    "soilTdr": "sol/iot/soil/{zone}/tdr"
+  },
+  "devices": {
+    "collars": [
+      { "rfid": "RFID-CTL-9021", "name": "Texas Queen #21", "wilaya": "Adrar", "baseTemp": 39.2, "baseAmbient": 38.5, "baseHumidity": 18 },
+      { "rfid": "RFID-CTL-9022", "name": "Lone Star Beladi #22", "wilaya": "Adrar", "baseTemp": 38.9, "baseAmbient": 39.0, "baseHumidity": 16 },
+      { "rfid": "RFID-CTL-9023", "name": "Rio Grande Atlas #23", "wilaya": "Biskra", "baseTemp": 38.7, "baseAmbient": 34.0, "baseHumidity": 28 },
+      { "rfid": "RFID-CTL-9024", "name": "Pecos Pride #24", "wilaya": "Mila", "baseTemp": 38.5, "baseAmbient": 26.5, "baseHumidity": 45 }
+    ],
+    "soilSensors": [
+      { "zone": "adrar_pivot_alfalfa", "nameAr": "حقل البرسيم الحجازي - أدرار", "crop": "Alfalfa", "baseVwc": 22.5, "baseEc": 1.85, "baseRootTemp": 24.2 },
+      { "zone": "biskra_silage_corn", "nameAr": "حوض سيلاج الذرة - بسكرة", "crop": "Corn Silage", "baseVwc": 28.4, "baseEc": 1.42, "baseRootTemp": 22.8 },
+      { "zone": "mila_pasture_alpha", "nameAr": "مراعي الهضاب العليا - ميلة", "crop": "High Plains Pasture", "baseVwc": 34.2, "baseEc": 0.95, "baseRootTemp": 19.5 }
+    ]
+  }
+}

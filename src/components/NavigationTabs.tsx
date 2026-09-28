@@ -6,9 +6,10 @@ import {
   SunMedium,
   QrCode,
   DatabaseZap,
+  Cpu,
 } from 'lucide-react';
 
-export type TabId = 'dashboard' | 'airlift' | 'rfid' | 'feed_climate' | 'qr_passport' | 'db_api';
+export type TabId = 'dashboard' | 'airlift' | 'rfid' | 'feed_climate' | 'qr_passport' | 'iot_telemetry' | 'db_api';
 
 interface Props {
   activeTab: TabId;
@@ -37,6 +38,13 @@ export const NavigationTabs: React.FC<Props> = ({ activeTab, onSelectTab, langua
       labelEn: 'RFID Tagging & Health',
       icon: <Tag className="w-4 h-4" />,
       badge: 'ISO-11784',
+    },
+    {
+      id: 'iot_telemetry',
+      labelAr: 'عصابات الـ IoT ومجسات التربة TDR',
+      labelEn: 'IoT Collars & Soil TDR',
+      icon: <Cpu className="w-4 h-4" />,
+      badge: 'MQTT Stream',
     },
     {
       id: 'feed_climate',

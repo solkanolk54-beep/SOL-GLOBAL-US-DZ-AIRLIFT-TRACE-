@@ -138,12 +138,20 @@ export const DashboardOverview: React.FC<Props> = ({
               <SunMedium className="w-4 h-4 text-amber-400" />
               <span>مؤشر الإجهاد الحراري بالمزارع (THI)</span>
             </span>
-            <button
-              onClick={() => onNavigate('feed_climate')}
-              className="text-emerald-400 hover:underline text-[11px] cursor-pointer"
-            >
-              حاسبة العليقة ➔
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => onNavigate('iot_telemetry')}
+                className="text-cyan-400 hover:underline text-[11px] cursor-pointer"
+              >
+                بث الـ IoT الحي ➔
+              </button>
+              <button
+                onClick={() => onNavigate('feed_climate')}
+                className="text-emerald-400 hover:underline text-[11px] cursor-pointer"
+              >
+                العليقة ➔
+              </button>
+            </div>
           </div>
 
           <div className="space-y-2.5">
